@@ -50,7 +50,7 @@ func (xds *XDSCache) ListenerContents() []types.Resource {
 	var r []types.Resource
 
 	for _, l := range xds.Listeners {
-		r = append(r, resources.MakeHTTPListener(l.Name, l.RouteNames[0], l.Address, l.Port))
+		r = append(r, resources.MakePostgresListener(l.Name, l.RouteNames[0], l.RouteNames[1], l.Address, l.Port)) // resources.MakeHTTPListener(l.Name, l.RouteNames[0], l.Address, l.Port))
 	}
 
 	return r

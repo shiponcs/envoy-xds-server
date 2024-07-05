@@ -15,20 +15,21 @@
 package resources
 
 import (
+	tracev3 "github.com/envoyproxy/go-control-plane/envoy/config/trace/v3"
+	"github.com/golang/protobuf/ptypes/duration"
 	"google.golang.org/protobuf/types/known/anypb"
 	"time"
 
 	"github.com/golang/protobuf/ptypes"
 
+	postgres "github.com/envoyproxy/go-control-plane/contrib/envoy/extensions/filters/network/postgres_proxy/v3alpha"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
-	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	tcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
-	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 )
 
 const (
@@ -116,25 +117,200 @@ func MakeRoute(routes []Route) *route.RouteConfiguration {
 	}
 }
 
-func MakeHTTPListener(listenerName, route, address string, port uint32) *listener.Listener {
-	routerConfig, _ := anypb.New(&router.Router{})
+func MakePostgresListener(lisName, dbBackend, otelBackend, address string, port uint32) *listener.Listener {
 
-	// HTTP filter configuration
-	manager := &hcm.HttpConnectionManager{
-		CodecType:  hcm.HttpConnectionManager_AUTO,
-		StatPrefix: "http",
-		RouteSpecifier: &hcm.HttpConnectionManager_Rds{
-			Rds: &hcm.Rds{
-				ConfigSource:    makeConfigSource(),
-				RouteConfigName: "listener_0",
+	mgrTCP := &tcp.TcpProxy{
+		StatPrefix: "tcp",
+		ClusterSpecifier: &tcp.TcpProxy_Cluster{
+			Cluster: dbBackend,
+		},
+	}
+	mgrtcpAny, err := anypb.New(mgrTCP)
+	if err != nil {
+		return nil
+	}
+
+	otl := &tracev3.OpenTelemetryConfig{
+		GrpcService: &core.GrpcService{
+			TargetSpecifier: &core.GrpcService_EnvoyGrpc_{
+				EnvoyGrpc: &core.GrpcService_EnvoyGrpc{
+					ClusterName: otelBackend,
+				},
+			},
+			Timeout: &duration.Duration{
+				Seconds: 1,
+				Nanos:   0,
+			},
+			InitialMetadata: nil,
+		},
+		ServiceName: "otel-dep",
+	}
+
+	otelAny, err := anypb.New(otl)
+
+	mgrPostgres := &postgres.PostgresProxy{
+		StatPrefix:       "lulu",
+		EnableSqlParsing: nil,
+		TerminateSsl:     false,
+		UpstreamSsl:      postgres.PostgresProxy_DISABLE,
+		AuditLog: &tracev3.Tracing_Http{
+			Name: "envoy.tracers.opentelemetry",
+			ConfigType: &tracev3.Tracing_Http_TypedConfig{
+				TypedConfig: otelAny,
 			},
 		},
-		HttpFilters: []*hcm.HttpFilter{{
-			Name:       wellknown.Router,
-			ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig},
-		}},
 	}
+
+	mgrPostgresAny, err := anypb.New(mgrPostgres)
+
+	return &listener.Listener{
+		Name: lisName,
+		Address: &core.Address{
+			Address: &core.Address_SocketAddress{
+				SocketAddress: &core.SocketAddress{
+					Protocol: core.SocketAddress_TCP,
+					Address:  address,
+					PortSpecifier: &core.SocketAddress_PortValue{
+						PortValue: port,
+					},
+				},
+			},
+		},
+		FilterChains: []*listener.FilterChain{
+			{
+				Filters: []*listener.Filter{
+					{
+						//Name: wellknown.HTTPConnectionManager,
+						Name: "envoy.filters.network.postgres_proxy",
+						ConfigType: &listener.Filter_TypedConfig{
+							TypedConfig: mgrPostgresAny,
+						},
+					},
+					{
+						Name: "envoy.filters.network.tcp_proxy",
+						ConfigType: &listener.Filter_TypedConfig{
+							TypedConfig: mgrtcpAny,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+//
+//func MakePostgresListener(listenerName, route, address string, port uint32) *listener.Listener {
+//	//routerConfig, _ := anypb.New(&router.Router{})
+//	// postgres configuration
+//	manager := &postgres.PostgresProxy{
+//		StatPrefix:       "lulu_pg",
+//		EnableSqlParsing: nil,
+//		TerminateSsl:     false,
+//		UpstreamSsl:      0,
+//	}
+//	// TCP configuration
+//	manager2 := &tcp.TcpProxy{
+//		StatPrefix: "lulu_tcp",
+//		ClusterSpecifier: &tcp.TcpProxy_Cluster{
+//			Cluster: "pg_cluster",
+//		},
+//	}
+//
+//	//// HTTP filter configuration
+//	//manager := &hcm.HttpConnectionManager{
+//	//	CodecType:  hcm.HttpConnectionManager_AUTO,
+//	//	StatPrefix: "http",
+//	//	RouteSpecifier: &hcm.HttpConnectionManager_Rds{
+//	//		Rds: &hcm.Rds{
+//	//			ConfigSource:    makeConfigSource(),
+//	//			RouteConfigName: "listener_0",
+//	//		},
+//	//	},
+//	//	HttpFilters: []*hcm.HttpFilter{{
+//	//		Name:       wellknown.Router,
+//	//		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig},
+//	//	}},
+//	//}
+//	pbst, err := ptypes.MarshalAny(manager)
+//	//pbst2, err := ptypes.MarshalAny(manager2)
+//	pbst2, err := anypb.New(manager2)
+//	if err != nil {
+//		panic(err)
+//	}
+//	if err != nil {
+//		panic(err)
+//	}
+//
+//	return &listener.Listener{
+//		Name: listenerName,
+//		Address: &core.Address{
+//			Address: &core.Address_SocketAddress{
+//				SocketAddress: &core.SocketAddress{
+//					Protocol: core.SocketAddress_TCP,
+//					Address:  address,
+//					PortSpecifier: &core.SocketAddress_PortValue{
+//						PortValue: port,
+//					},
+//				},
+//			},
+//		},
+//		FilterChains: []*listener.FilterChain{{
+//			Filters: []*listener.Filter{{
+//				//Name: wellknown.HTTPConnectionManager,
+//				Name: "envoy.filters.network.postgres_proxy",
+//				ConfigType: &listener.Filter_TypedConfig{
+//					TypedConfig: pbst,
+//				},
+//			},
+//				{
+//					Name: "envoy.filters.network.tcp_proxy",
+//					ConfigType: &listener.Filter_TypedConfig{
+//						TypedConfig: pbst2,
+//					},
+//				},
+//			},
+//		}},
+//	}
+//}
+
+func MakeHTTPListener(listenerName, route, address string, port uint32) *listener.Listener {
+	//routerConfig, _ := anypb.New(&router.Router{})
+	// postgres configuration
+	manager := &postgres.PostgresProxy{
+		StatPrefix:       "lulu_pg",
+		EnableSqlParsing: nil,
+		TerminateSsl:     false,
+		UpstreamSsl:      0,
+	}
+	// TCP configuration
+	manager2 := &tcp.TcpProxy{
+		StatPrefix: "lulu_tcp",
+		ClusterSpecifier: &tcp.TcpProxy_Cluster{
+			Cluster: "pg_cluster",
+		},
+	}
+
+	//// HTTP filter configuration
+	//manager := &hcm.HttpConnectionManager{
+	//	CodecType:  hcm.HttpConnectionManager_AUTO,
+	//	StatPrefix: "http",
+	//	RouteSpecifier: &hcm.HttpConnectionManager_Rds{
+	//		Rds: &hcm.Rds{
+	//			ConfigSource:    makeConfigSource(),
+	//			RouteConfigName: "listener_0",
+	//		},
+	//	},
+	//	HttpFilters: []*hcm.HttpFilter{{
+	//		Name:       wellknown.Router,
+	//		ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig},
+	//	}},
+	//}
 	pbst, err := ptypes.MarshalAny(manager)
+	//pbst2, err := ptypes.MarshalAny(manager2)
+	pbst2, err := anypb.New(manager2)
+	if err != nil {
+		panic(err)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -154,11 +330,19 @@ func MakeHTTPListener(listenerName, route, address string, port uint32) *listene
 		},
 		FilterChains: []*listener.FilterChain{{
 			Filters: []*listener.Filter{{
-				Name: wellknown.HTTPConnectionManager,
+				//Name: wellknown.HTTPConnectionManager,
+				Name: "envoy.filters.network.postgres_proxy",
 				ConfigType: &listener.Filter_TypedConfig{
 					TypedConfig: pbst,
 				},
-			}},
+			},
+				{
+					Name: "envoy.filters.network.tcp_proxy",
+					ConfigType: &listener.Filter_TypedConfig{
+						TypedConfig: pbst2,
+					},
+				},
+			},
 		}},
 	}
 }

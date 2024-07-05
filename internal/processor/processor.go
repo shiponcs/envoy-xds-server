@@ -84,10 +84,14 @@ func (p *Processor) ProcessFile(file watcher.NotifyMessage) {
 		return
 	}
 
+	//fmt.Println(envoyConfig)
+
 	// Parse Listeners
 	for _, l := range envoyConfig.Listeners {
+		//fmt.Println(l)
 		var lRoutes []string
 		for _, lr := range l.Routes {
+			//fmt.Println(lr)
 			lRoutes = append(lRoutes, lr.Name)
 		}
 
@@ -113,7 +117,7 @@ func (p *Processor) ProcessFile(file watcher.NotifyMessage) {
 	resources := map[resource.Type][]types.Resource{
 		resource.EndpointType: p.xdsCache.EndpointsContents(),
 		resource.ClusterType:  p.xdsCache.ClusterContents(),
-		resource.RouteType:    p.xdsCache.RouteContents(),
+		//resource.RouteType:    p.xdsCache.RouteContents(),
 		resource.ListenerType: p.xdsCache.ListenerContents(),
 	}
 	// Create the snapshot that we'll serve to Envoy

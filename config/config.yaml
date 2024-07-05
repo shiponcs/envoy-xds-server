@@ -1,0 +1,27 @@
+name: testconfig
+spec:
+  listeners:
+    - name: listener_0
+      address: 0.0.0.0
+      port: 9000
+      routes:
+        - name: pg_cluster
+          prefix: /
+          clusters:
+            - pg_cluster
+        - name: opentelemetry_collector
+          prefix: /
+          clusters:
+            - opentelemetry_collector
+
+  clusters:
+    - name: pg_cluster
+      endpoints:
+        - address: 127.0.0.1
+          port: 5432
+    - name: opentelemetry_collector
+      endpoints:
+        - address: 172.104.52.5
+          port: 30909
+#        - address: 127.0.0.1
+#          port: 9102
